@@ -63,6 +63,120 @@ public:
 	// To keep things simple, they only contain those properties that are required for this sample
 	struct Node;
 
+	struct TranslationTrackKey
+	{
+		float keyTime;
+		glm::vec3 translation;
+	};
+
+	struct ScaleTrackKey
+	{
+		float keyTime;
+		glm::vec3 scale;
+	};
+
+	struct RotationTrackKey
+	{
+		float keyTime;
+		glm::quat rotation;
+	};
+
+	// 暂时不支持1个以上的trans/rotate/scale track
+	struct AnimationSequence
+	{
+		std::vector<TranslationTrackKey> translationTrack;
+		std::vector<ScaleTrackKey> scaleTrack;
+		std::vector<RotationTrackKey> rotationTrack;
+
+		bool GetTranslationAtTime(float sampleTime, glm::vec3& translation)
+		{
+			translation = glm::vec3(0, 0, 0);
+			if (translationTrack.empty())
+			{
+				return false;
+			}
+			if (sampleTime <= translationTrack.front().keyTime)
+			{
+				translation = translationTrack.front().translation;
+				return true;
+			}
+
+			if (sampleTime >= translationTrack.back().keyTime)
+			{
+				translation = translationTrack.back().translation;
+				return true;
+			}
+
+			for (size_t i = 0; i < translationTrack.size() - 1; ++i)
+			{
+				if (sampleTime >= translationTrack[i].keyTime && sampleTime <= translationTrack[i + 1].keyTime)
+				{
+					float t = (sampleTime - translationTrack[i].keyTime) / (translationTrack[i + 1].keyTime - translationTrack[i].keyTime);
+					translation = glm::mix(translationTrack[i].translation, translationTrack[i + 1].translation, t);
+					return true;
+				}
+			}
+		}
+
+		bool GetRotationAtTime(float sampleTime, glm::quat& rotation)
+		{
+			if (rotationTrack.empty())
+			{
+				return false;
+			}
+			if (sampleTime <= rotationTrack.front().keyTime)
+			{
+				rotation = rotationTrack.front().rotation;
+				return true;
+			}
+
+			if (sampleTime >= rotationTrack.back().keyTime)
+			{
+				rotation = rotationTrack.back().rotation;
+				return true;
+			}
+
+			for (size_t i = 0; i < rotationTrack.size() - 1; ++i)
+			{
+				if (sampleTime >= rotationTrack[i].keyTime && sampleTime <= rotationTrack[i + 1].keyTime)
+				{
+					float t = (sampleTime - rotationTrack[i].keyTime) / (rotationTrack[i + 1].keyTime - rotationTrack[i].keyTime);
+					rotation = glm::slerp(rotationTrack[i].rotation, rotationTrack[i + 1].rotation, t);
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		bool GetScaleAtTime(float sampleTime, glm::vec3& scale)
+		{
+			scale = glm::vec3(1, 1, 1);
+			if (scaleTrack.empty())
+			{
+				return false;
+			}
+			if (sampleTime >= scaleTrack.back().keyTime)
+			{
+				scale = scaleTrack.back().scale;
+				return true;
+			}
+
+			for (size_t i = 0; i < scaleTrack.size() - 1; ++i)
+			{
+				if (sampleTime >= scaleTrack[i].keyTime && sampleTime <= scaleTrack[i + 1].keyTime)
+				{
+					float t = (sampleTime - scaleTrack[i].keyTime) / (scaleTrack[i + 1].keyTime - scaleTrack[i].keyTime);
+					scale = glm::mix(scaleTrack[i].scale, scaleTrack[i + 1].scale, t);
+					return true;
+				}
+			}
+
+			return false;
+		}
+	};
+
+
 	// A primitive contains the data for a single draw call
 	struct Primitive {
 		uint32_t firstIndex;
@@ -81,11 +195,49 @@ public:
 		std::vector<Node*> children;
 		Mesh mesh;
 		glm::mat4 matrix;
+		AnimationSequence transformAnime;
+		VkBuffer uniformBuffer;
+		VkDeviceMemory uniformBufferMemory;
+		void* uniformBufferMapped;
 		~Node() {
 			for (auto& child : children) {
 				delete child;
 			}
 		}
+
+		void ApplyAnimeToTransform(float currentTime)
+		{
+			glm::vec3 translationAnime,scaleAnime;
+			glm::quat rotationAnime;
+
+			bool bAnimeTranslate = transformAnime.GetTranslationAtTime(currentTime, translationAnime);
+			bool bAnimeScale = transformAnime.GetScaleAtTime(currentTime, scaleAnime);
+			bool bAnimeRotation = transformAnime.GetRotationAtTime(currentTime, rotationAnime);
+
+			// Apply translation animation
+			if (bAnimeTranslate)
+			{
+				matrix = glm::translate(glm::mat4(1.0f), translationAnime) * matrix;
+			}
+
+			// Apply rotation animation
+			if (bAnimeRotation)
+			{
+				matrix = glm::mat4_cast(rotationAnime) * matrix;
+			}
+
+			// Apply scale animation
+			if (bAnimeScale)
+			{
+				matrix = glm::scale(glm::mat4(1.0f), scaleAnime) * matrix;
+			}
+		}
+
+		void InitTransformUniformBuffer()
+		{
+			
+		}
+
 	};
 
 	// A glTF material stores information in e.g. the texture that is attached to it and colors
@@ -115,6 +267,7 @@ public:
 	std::vector<Texture> textures;
 	std::vector<Material> materials;
 	std::vector<Node*> nodes;
+
 
 	~VulkanglTFModel()
 	{
@@ -201,7 +354,101 @@ public:
 		}
 	}
 
-	void loadNode(const tinygltf::Node& inputNode, const tinygltf::Model& input, VulkanglTFModel::Node* parent, std::vector<uint32_t>& indexBuffer, std::vector<VulkanglTFModel::Vertex>& vertexBuffer)
+	void loadAnimeToNode(const tinygltf::Model& model, int nodeIndex, VulkanglTFModel::Node* outNode)
+	{
+			// Check if nodeIndex is valid
+	    if (nodeIndex < 0 || nodeIndex >= model.nodes.size())
+	    {
+	        std::cerr << "Invalid node index: " << nodeIndex << std::endl;
+	        return;
+	    }
+
+	    VulkanglTFModel::AnimationSequence& animationSequence = outNode->transformAnime;
+
+	    // Iterate through all animations in the glTF model
+	    for (const auto& animation : model.animations)
+	    {
+	        // Check if this animation targets the node at nodeIndex
+	        bool targetsNode = false;
+	        for (const auto& channel : animation.channels)
+	        {
+	            if (channel.target_node == nodeIndex)
+	            {
+	                targetsNode = true;
+	                break;
+	            }
+	        }
+
+	        if (!targetsNode)
+	            continue;
+
+	        // Process translation tracks
+	        for (const auto& channel : animation.channels)
+	        {
+	            if (channel.target_node != nodeIndex)
+	                continue;
+
+	            const tinygltf::AnimationSampler& sampler = animation.samplers[channel.sampler];
+
+	            if (sampler.input >= 0 && sampler.input < model.accessors.size() &&
+	                sampler.output >= 0 && sampler.output < model.accessors.size())
+	            {
+	                const tinygltf::Accessor& inputAccessor = model.accessors[sampler.input];
+	                const tinygltf::Accessor& outputAccessor = model.accessors[sampler.output];
+
+	            	//将当前animation填充到node的animationSequence中
+	                if (inputAccessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT)
+	                {
+	                	const tinygltf::BufferView& inputBufferView = model.bufferViews[inputAccessor.bufferView];
+	                	const tinygltf::BufferView& outputBufferView = model.bufferViews[outputAccessor.bufferView];
+
+	                	
+	                    const float* times = reinterpret_cast<const float*>(
+	                    	model.buffers[inputBufferView.buffer].data.data() + inputAccessor.byteOffset);
+	                    const void* outputs = model.buffers[outputBufferView.buffer].data.data() + outputAccessor.byteOffset;
+
+	                    if (channel.target_path == "translation" && outputAccessor.type == TINYGLTF_TYPE_VEC3)
+	                    {
+	                        const glm::vec3* translations = reinterpret_cast<const glm::vec3*>(outputs);
+	                        for (size_t i = 0; i < outputAccessor.count; ++i)
+	                        {
+	                            VulkanglTFModel::TranslationTrackKey trackKey;
+	                            trackKey.keyTime = times[i];
+	                            trackKey.translation = translations[i];
+	                            animationSequence.translationTrack.push_back(trackKey);
+	                        }
+	                    }
+	                    else if (channel.target_path == "rotation" && outputAccessor.type == TINYGLTF_TYPE_VEC4)
+	                    {
+	                        const glm::quat* rotations = reinterpret_cast<const glm::quat*>(outputs);
+	                        for (size_t i = 0; i < outputAccessor.count; ++i)
+	                        {
+	                            VulkanglTFModel::RotationTrackKey trackKey;
+	                            trackKey.keyTime = times[i];
+	                            trackKey.rotation = rotations[i];
+	                            animationSequence.rotationTrack.push_back(trackKey);
+	                        }
+	                    }
+	                    else if (channel.target_path == "scale" && outputAccessor.type == TINYGLTF_TYPE_VEC3)
+	                    {
+	                        const glm::vec3* scales = reinterpret_cast<const glm::vec3*>(outputs);
+	                        for (size_t i = 0; i < outputAccessor.count; ++i)
+	                        {
+	                            VulkanglTFModel::ScaleTrackKey trackKey;
+	                            trackKey.keyTime = times[i];
+	                            trackKey.scale = scales[i];
+	                            animationSequence.scaleTrack.push_back(trackKey);
+	                        }
+	                    }
+	                }
+	            }
+	        }
+	    }
+	}
+
+	void loadNode(const tinygltf::Node& inputNode, const tinygltf::Model& input,
+		VulkanglTFModel::Node* parent, std::vector<uint32_t>& indexBuffer,
+		std::vector<VulkanglTFModel::Vertex>& vertexBuffer, int nodeIndex)
 	{
 		VulkanglTFModel::Node* node = new VulkanglTFModel::Node{};
 		node->matrix = glm::mat4(1.0f);
@@ -226,7 +473,8 @@ public:
 		// Load node's children
 		if (inputNode.children.size() > 0) {
 			for (size_t i = 0; i < inputNode.children.size(); i++) {
-				loadNode(input.nodes[inputNode.children[i]], input , node, indexBuffer, vertexBuffer);
+				int childNodeIndex = inputNode.children[i];
+				loadNode(input.nodes[childNodeIndex], input , node, indexBuffer, vertexBuffer, childNodeIndex);
 			}
 		}
 
@@ -322,6 +570,10 @@ public:
 			}
 		}
 
+		// 查找当前nodeIndex对应的animation
+		loadAnimeToNode(input, nodeIndex, node);
+		
+
 		if (parent) {
 			parent->children.push_back(node);
 		}
@@ -363,6 +615,28 @@ public:
 		}
 	}
 
+	static float GetCurrentTimeInSeconds()
+	{
+		// Get the current time point
+		auto now = std::chrono::high_resolution_clock::now();
+    
+		// Convert time point to duration in seconds
+		auto duration = now.time_since_epoch();
+		float seconds = std::chrono::duration_cast<std::chrono::duration<float>>(duration).count();
+    
+		return seconds;
+	}
+
+	void UpdateNodesTransformByAnimation()
+	{
+		float currentTime = GetCurrentTimeInSeconds();
+
+		for (Node* node : nodes)
+		{
+			node->ApplyAnimeToTransform(currentTime);
+		}
+	}
+
 	// Draw the glTF scene starting at the top-level-nodes
 	void draw(VkCommandBuffer commandBuffer, VkPipelineLayout pipelineLayout)
 	{
@@ -370,6 +644,10 @@ public:
 		VkDeviceSize offsets[1] = { 0 };
 		vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertices.buffer, offsets);
 		vkCmdBindIndexBuffer(commandBuffer, indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+		//
+		UpdateNodesTransformByAnimation();
+		
 		// Render all nodes at top-level
 		for (auto& node : nodes) {
 			drawNode(commandBuffer, pipelineLayout, node);
@@ -405,6 +683,7 @@ public:
 
 	struct DescriptorSetLayouts {
 		VkDescriptorSetLayout matrices;
+		VkDescriptorSetLayout nodeMatrices; //每个节点的变换矩阵的layout
 		VkDescriptorSetLayout textures;
 	} descriptorSetLayouts;
 
@@ -508,8 +787,9 @@ public:
 			glTFModel.loadTextures(glTFInput);
 			const tinygltf::Scene& scene = glTFInput.scenes[0];
 			for (size_t i = 0; i < scene.nodes.size(); i++) {
-				const tinygltf::Node node = glTFInput.nodes[scene.nodes[i]];
-				glTFModel.loadNode(node, glTFInput, nullptr, indexBuffer, vertexBuffer);
+				int nodeIndex = scene.nodes[i];
+				const tinygltf::Node node = glTFInput.nodes[nodeIndex];
+				glTFModel.loadNode(node, glTFInput, nullptr, indexBuffer, vertexBuffer, nodeIndex);
 			}
 		}
 		else {
@@ -603,29 +883,45 @@ public:
 
 		std::vector<VkDescriptorPoolSize> poolSizes = {
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1),
+			//添加一个uniform 用来更新每个node的transform
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(glTFModel.nodes.size())),
 			// One combined image sampler per model image/texture
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(glTFModel.images.size())),
 		};
 		// One set for matrices and one per model image/texture
-		const uint32_t maxSetCount = static_cast<uint32_t>(glTFModel.images.size()) + 1;
+		const uint32_t maxSetCount = static_cast<uint32_t>(glTFModel.images.size()) +
+			static_cast<uint32_t>(glTFModel.nodes.size()) + 1;
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, maxSetCount);
 		VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool));
 
 		// Descriptor set layout for passing matrices
-		VkDescriptorSetLayoutBinding setLayoutBinding = vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0);
-		VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCI = vks::initializers::descriptorSetLayoutCreateInfo(&setLayoutBinding, 1);
+		VkDescriptorSetLayoutBinding setLayoutBinding =
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0);
+		VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCI =
+			vks::initializers::descriptorSetLayoutCreateInfo(&setLayoutBinding, 1);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCI, nullptr, &descriptorSetLayouts.matrices));
+
+#pragma region DesSetLayoutForNodeMatrix
+		// Descriptor set layout for passing matrices
+		VkDescriptorSetLayoutBinding nodeSetLayoutBinding =
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 1);
+		VkDescriptorSetLayoutCreateInfo nodeDescriptorSetLayoutCI =
+			vks::initializers::descriptorSetLayoutCreateInfo(&nodeSetLayoutBinding, 1);
+		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &nodeDescriptorSetLayoutCI, nullptr, &descriptorSetLayouts.nodeMatrices));
+#pragma endregion
+		
 		// Descriptor set layout for passing material textures
 		setLayoutBinding = vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 0);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCI, nullptr, &descriptorSetLayouts.textures));
 		// Pipeline layout using both descriptor sets (set 0 = matrices, set 1 = material)
-		std::array<VkDescriptorSetLayout, 2> setLayouts = { descriptorSetLayouts.matrices, descriptorSetLayouts.textures };
+		std::array<VkDescriptorSetLayout, 3> setLayouts = { descriptorSetLayouts.matrices,
+			descriptorSetLayouts.nodeMatrices, descriptorSetLayouts.textures };
 		VkPipelineLayoutCreateInfo pipelineLayoutCI= vks::initializers::pipelineLayoutCreateInfo(setLayouts.data(), static_cast<uint32_t>(setLayouts.size()));
 		// We will use push constants to push the local matrices of a primitive to the vertex shader
-		VkPushConstantRange pushConstantRange = vks::initializers::pushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, sizeof(glm::mat4), 0);
+		// VkPushConstantRange pushConstantRange = vks::initializers::pushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, sizeof(glm::mat4), 0);
 		// Push constant ranges are part of the pipeline layout
-		pipelineLayoutCI.pushConstantRangeCount = 1;
-		pipelineLayoutCI.pPushConstantRanges = &pushConstantRange;
+		pipelineLayoutCI.pushConstantRangeCount = 0;
+		// pipelineLayoutCI.pPushConstantRanges = &pushConstantRange;
 		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCI, nullptr, &pipelineLayout));
 
 		// Descriptor set for scene matrices
@@ -633,6 +929,14 @@ public:
 		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet));
 		VkWriteDescriptorSet writeDescriptorSet = vks::initializers::writeDescriptorSet(descriptorSet, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &shaderData.buffer.descriptor);
 		vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
+
+#pragma region DescriptorSetForNodeMatrices
+		VkDescriptorSetAllocateInfo nodeAllocInfo = vks::initializers::descriptorSetAllocateInfo(
+			descriptorPool, &descriptorSetLayouts.nodeMatrices, 1);
+		vkAllocateDescriptorSets(device, &nodeAllocInfo, glTFModel.nodes)
+		// #TODO 给model的每个节点的trans matrix创建descriptor set,并绑定
+#pragma endregion
+		
 		// Descriptor sets for materials
 		for (auto& image : glTFModel.images) {
 			const VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.textures, 1);
