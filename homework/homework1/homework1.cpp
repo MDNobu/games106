@@ -23,6 +23,15 @@
 #ifdef VK_USE_PLATFORM_ANDROID_KHR
 #define TINYGLTF_ANDROID_LOAD_FROM_ASSETS
 #endif
+#define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/matrix_inverse.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
+
 #include "tiny_gltf.h"
 
 #include "vulkanexamplebase.h"
@@ -602,6 +611,9 @@ public:
 			vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &nodeMatrix);
 			for (VulkanglTFModel::Primitive& primitive : node->mesh.primitives) {
 				if (primitive.indexCount > 0) {
+					// TODO 添加当前node的disptor set到最终的draw call中
+					
+					
 					// Get the texture index for this primitive
 					VulkanglTFModel::Texture texture = textures[materials[primitive.materialIndex].baseColorTextureIndex];
 					// Bind the descriptor for the current primitive's texture
