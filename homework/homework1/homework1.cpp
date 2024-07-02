@@ -207,7 +207,12 @@ public:
 		AnimationSequence transformAnime;
 		VkBuffer uniformBuffer;
 		VkDeviceMemory uniformBufferMemory;
+		VkDescriptorBufferInfo bufferInfo;
+
 		void* uniformBufferMapped;
+		// 存储当前node的transform matrix的descriptor set
+		VkDescriptorSet transformMatDST;
+
 		~Node() {
 			for (auto& child : children) {
 				delete child;
@@ -242,9 +247,15 @@ public:
 			}
 		}
 
-		void InitTransformUniformBuffer()
+		void InitTransformUniformBuffer(vks::VulkanDevice* vulkanDevice)
 		{
-			
+			VkDeviceSize bufferSize = sizeof(glm::mat4);
+			vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				bufferSize, &uniformBuffer, &uniformBufferMemory, &matrix);
+
+			bufferInfo.buffer = uniformBuffer;
+			bufferInfo.offset = 0;
+			bufferInfo.range = bufferSize;
 		}
 
 	};
@@ -288,6 +299,11 @@ public:
 		vkFreeMemory(vulkanDevice->logicalDevice, vertices.memory, nullptr);
 		vkDestroyBuffer(vulkanDevice->logicalDevice, indices.buffer, nullptr);
 		vkFreeMemory(vulkanDevice->logicalDevice, indices.memory, nullptr);
+		for (Node* node : nodes)
+		{
+			vkDestroyBuffer(vulkanDevice->logicalDevice, node->uniformBuffer, nullptr);
+			vkFreeMemory(vulkanDevice->logicalDevice, node->uniformBufferMemory, nullptr);
+		}
 		for (Image image : images) {
 			vkDestroyImageView(vulkanDevice->logicalDevice, image.texture.view, nullptr);
 			vkDestroyImage(vulkanDevice->logicalDevice, image.texture.image, nullptr);
@@ -363,7 +379,7 @@ public:
 		}
 	}
 
-	void loadAnimeToNode(const tinygltf::Model& model, int nodeIndex, VulkanglTFModel::Node* outNode)
+	static void loadAnimeToNode(const tinygltf::Model& model, int nodeIndex, VulkanglTFModel::Node* outNode)
 	{
 			// Check if nodeIndex is valid
 	    if (nodeIndex < 0 || nodeIndex >= model.nodes.size())
@@ -454,6 +470,8 @@ public:
 	        }
 	    }
 	}
+
+	
 
 	void loadNode(const tinygltf::Node& inputNode, const tinygltf::Model& input,
 		VulkanglTFModel::Node* parent, std::vector<uint32_t>& indexBuffer,
@@ -579,9 +597,12 @@ public:
 			}
 		}
 
+		
+
 		// 查找当前nodeIndex对应的animation
 		loadAnimeToNode(input, nodeIndex, node);
 		
+		node->InitTransformUniformBuffer(vulkanDevice);
 
 		if (parent) {
 			parent->children.push_back(node);
@@ -608,7 +629,7 @@ public:
 				currentParent = currentParent->parent;
 			}
 			// Pass the final matrix to the vertex shader using push constants
-			vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &nodeMatrix);
+			// vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &nodeMatrix);
 			for (VulkanglTFModel::Primitive& primitive : node->mesh.primitives) {
 				if (primitive.indexCount > 0) {
 					// TODO 添加当前node的disptor set到最终的draw call中
@@ -616,8 +637,11 @@ public:
 					
 					// Get the texture index for this primitive
 					VulkanglTFModel::Texture texture = textures[materials[primitive.materialIndex].baseColorTextureIndex];
+					std::array<VkDescriptorSet, 2> descriptorSets = {images[texture.imageIndex].descriptorSet, node->transformMatDST};
+					
+					
 					// Bind the descriptor for the current primitive's texture
-					vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &images[texture.imageIndex].descriptorSet, 0, nullptr);
+					vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, descriptorSets.size(), descriptorSets.data(), 0, nullptr);
 					vkCmdDrawIndexed(commandBuffer, primitive.indexCount, 1, primitive.firstIndex, 0, 0);
 				}
 			}
@@ -721,6 +745,7 @@ public:
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayouts.matrices, nullptr);
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayouts.textures, nullptr);
+		vkDestroyDescriptorSetLayout(device, descriptorSetLayouts.nodeMatrices, nullptr);
 
 		shaderData.buffer.destroy();
 	}
@@ -945,7 +970,15 @@ public:
 #pragma region DescriptorSetForNodeMatrices
 		VkDescriptorSetAllocateInfo nodeAllocInfo = vks::initializers::descriptorSetAllocateInfo(
 			descriptorPool, &descriptorSetLayouts.nodeMatrices, 1);
-		vkAllocateDescriptorSets(device, &nodeAllocInfo, glTFModel.nodes)
+		// vkAllocateDescriptorSets(device, &nodeAllocInfo, glTFModel.nodes)
+		for(VulkanglTFModel::Node* node: glTFModel.nodes)
+		{
+			VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.nodeMatrices, 1);
+			VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &node->transformMatDST));
+			VkWriteDescriptorSet writeDescriptorSet = vks::initializers::writeDescriptorSet(node->transformMatDST,
+				VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, &node->bufferInfo);
+			vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
+		}
 		// #TODO 给model的每个节点的trans matrix创建descriptor set,并绑定
 #pragma endregion
 		

@@ -13,7 +13,12 @@ layout (set = 0, binding = 0) uniform UBOScene
 	vec4 viewPos;
 } uboScene;
 
-layout(push_constant) uniform PushConsts {
+// layout(push_constant) uniform PushConsts {
+// 	mat4 model;
+// } primitive;
+
+layout (set = 1, binding = 1) uniform Transforms
+{
 	mat4 model;
 } primitive;
 
