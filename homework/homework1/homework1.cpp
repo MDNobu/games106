@@ -231,6 +231,15 @@ public:
 			  rotation(1.0f, 0.0f, 0.0f, 0.0f), // Identity quaternion
 			  scale(1.0f, 1.0f, 1.0f)
 		{}
+
+		glm::mat4 GetMatrix()
+		{
+			glm::mat4 matrix = glm::mat4(1.0f); // Initialize as identity matrix
+			matrix = glm::translate(matrix, translation); // Apply translation
+			matrix = matrix * glm::mat4_cast(rotation); // Apply rotation
+			matrix = glm::scale(matrix, scale); // Apply scaling
+			return matrix;
+		}
 	};
 
 	// A node represents an object in the glTF scene graph
@@ -269,32 +278,55 @@ public:
 			bool bAnimeScale = transformAnime.GetScaleAtTime(currentTime, scaleAnime);
 			bool bAnimeRotation = transformAnime.GetRotationAtTime(currentTime, rotationAnime);
 
-
-			if (bAnimeTranslate || bAnimeRotation || bAnimeScale )
-			{
-				matrix = glm::mat4(1.0); // #TODO 这里怎样对matrix变换存在疑问
-			}
-			
+#pragma region Deprecated
+			// if (bAnimeTranslate || bAnimeRotation || bAnimeScale )
+			// {
+			// 	matrix = glm::mat4(1.0); // #TODO 这里怎样对matrix变换存在疑问
+			// }
+			//
+			// // Apply translation animation
+			// if (bAnimeTranslate)
+			// {
+			// 	// std::cout << "anime translation:(" << translationAnime[0] << ", " << translationAnime[1] << "," << translationAnime[2] << ")" << std::endl;
+			// 	matrix = glm::translate(glm::mat4(1.0f), translationAnime) * matrix;
+			// }
+			//
+			// // Apply rotation animation
+			// if (bAnimeRotation)
+			// {
+			// 	matrix = glm::mat4_cast(rotationAnime) * matrix;
+			// }
+			//
+			// // Apply scale animation
+			// if (bAnimeScale)
+			// {
+			// 	matrix = glm::scale(glm::mat4(1.0f), scaleAnime) * matrix;
+			// }
+#pragma endregion
 			// Apply translation animation
 			if (bAnimeTranslate)
 			{
 				// std::cout << "anime translation:(" << translationAnime[0] << ", " << translationAnime[1] << "," << translationAnime[2] << ")" << std::endl;
-				matrix = glm::translate(glm::mat4(1.0f), translationAnime) * matrix;
+				// matrix = glm::translate(glm::mat4(1.0f), translationAnime) * matrix;
+				relativeTransform.translation = translationAnime;
 			}
-
+			
 			// Apply rotation animation
 			if (bAnimeRotation)
 			{
-				matrix = glm::mat4_cast(rotationAnime) * matrix;
+				// matrix = glm::mat4_cast(rotationAnime) * matrix;
+				relativeTransform.rotation = rotationAnime;
 			}
-
+			matrix = relativeTransform.GetMatrix();
+			
 			// Apply scale animation
 			if (bAnimeScale)
 			{
-				matrix = glm::scale(glm::mat4(1.0f), scaleAnime) * matrix;
+				// matrix = glm::scale(glm::mat4(1.0f), scaleAnime) * matrix;
+				relativeTransform.scale = scaleAnime;
 			}
 
-			const glm::mat4 nodeGlobalTransform = GetGlobalTransform();
+			const glm::mat4 nodeGlobalTransform = GetGlobalTransformMat();
 			memcpy(uniformBufferMapped, &nodeGlobalTransform, sizeof(glm::mat4));
 
 			for(Node* childNode : children)
@@ -331,8 +363,9 @@ public:
 		}
 
 		
-		glm::mat4 GetGlobalTransform()
+		glm::mat4 GetGlobalTransformMat()
 		{
+			
 			glm::mat4 nodeMatrix = matrix;
 			VulkanglTFModel::Node* currentParent = parent;
 			while (currentParent) {
@@ -590,13 +623,16 @@ public:
 		// It's either made up from translation, rotation, scale or a 4x4 matrix
 		if (inputNode.translation.size() == 3) {
 			node->matrix = glm::translate(node->matrix, glm::vec3(glm::make_vec3(inputNode.translation.data())));
+			node->relativeTransform.translation = glm::vec3(glm::make_vec3(inputNode.translation.data()));
 		}
 		if (inputNode.rotation.size() == 4) {
 			glm::quat q = glm::make_quat(inputNode.rotation.data());
 			node->matrix *= glm::mat4(q);
+			node->relativeTransform.rotation = q;
 		}
 		if (inputNode.scale.size() == 3) {
 			node->matrix = glm::scale(node->matrix, glm::vec3(glm::make_vec3(inputNode.scale.data())));
+			node->relativeTransform.scale = glm::vec3(glm::make_vec3(inputNode.scale.data()));
 		}
 		if (inputNode.matrix.size() == 16) {
 			node->matrix = glm::make_mat4x4(inputNode.matrix.data());
@@ -773,9 +809,9 @@ public:
 	void UpdateNodesTransformByAnimation()
 	{
 		float currentTime = GetCurrentTimeInSeconds();
-		currentTime = std::fmod(currentTime, 15.0f);
-		std::cout << "current time:" << currentTime << std::endl;
-		currentTime = 0;
+		currentTime = std::fmod(currentTime, 60.0f);
+		// std::cout << "current time:" << currentTime << std::endl;
+		// currentTime = 0;
 
 		for (Node* node : nodes)
 		{
