@@ -19,8 +19,10 @@ layout (set = 0, binding = 0) uniform UBOScene
 } uboScene;
 
 
-// layout (set = 1, binding = 0) uniform sampler2D samplerColorMap;
-layout (set = 1, binding = 1) uniform MaterialUniform
+
+
+// 先用pushconstants实现一版
+layout (push_constant) uniform MaterialUniform
 {
 	float metallic;
 	float roughness;
@@ -28,7 +30,16 @@ layout (set = 1, binding = 1) uniform MaterialUniform
 	float padding;
 } materialUniform;
 
-layout (set = 4, binding = 2) uniform sampler2D samplerColorMap;
+// layout (set = 1, binding = 0) uniform sampler2D samplerColorMap;
+//layout (set = 1, binding = 1) uniform MaterialUniform
+//{
+//	float metallic;
+//	float roughness;
+//	float specular; // 这个是一个简化管线未必有的
+//	float padding;
+//} materialUniform;
+
+layout (set = 2, binding = 1) uniform sampler2D samplerColorMap;
 
 layout (location = 0) in vec3 inNormal;
 layout (location = 1) in vec3 inColor;

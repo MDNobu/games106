@@ -18,7 +18,7 @@ layout (set = 0, binding = 0) uniform UBOScene
 // 	mat4 model;
 // } primitive;
 
-layout (set = 2, binding = 1) uniform Transforms
+layout (set = 1, binding = 1) uniform Transforms
 {
 	mat4 model;
 } primitive;
