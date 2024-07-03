@@ -1,3 +1,5 @@
+// 这里先按照简单的方式写一下，之后参考filament或者UE改成支持多种shading model的高扩展的实现
+
 
 const float PI = 3.14159265359;
 
@@ -31,31 +33,38 @@ float SchlickGGX(float NoV, float k)
     return nom / denom;
 }
 
-vec3 BRDF(vec3 L, vec3 V, vec3 N, float metallic, float roghness, 
-    vec3 baseColor, vec3 lightColor)
+vec3 SurfaceShading(vec3 N,  vec3 V, vec3 L,
+    vec3 baseColor, vec3 lightColor, float metallic, float roughness
+    )
 {
-    roghness = max(roghness, 0.05);
+    roughness = max(roughness, 0.05);
     //预计算一些vector和一些dots
     vec3 H =normalize(V + L);
     float NoV = clamp(dot(N, V), 0.0, 1.0);
     float NoL = clamp(dot(N, L), 0.0, 1.0);
     float LoH = clamp(dot(L, H), 0.0, 1.0);
     float NoH = clamp(dot(N, H), 0.0, 1.0);
+    float HoV = clamp(dot(H, V), 0.0, 1.0);
     float roughness2 = roughness * roughness;
     vec3 F0 = mix(vec3(0.04), baseColor, metallic);
     float k = ((roughness2 + 1.0) * (roughness2 + 1.0)) / 8.0;
 
     float D = Throwbridge_Reitz_GGX(NoH, roughness2);
     vec3 F = SchlickFresnel(HoV, F0);
-    float G = SchlickGGX(NoV, k), SchlickGGX(NoL, k);
+    float G = SchlickGGX(NoV, k) * SchlickGGX(NoL, k);
 
     vec3 k_s = F;
-    vec3 k_d = (1.0 - k_s)
+    vec3 k_d = (1.0 - k_s) * (1.0 - metallic);
+    vec3 f_diffuse = baseColor / PI;
+    vec3 f_sepecular = (D * F * G) / (4.0 * NoV * NoL + 0.0001);
+
+    vec3 diffuseTerm = k_d * f_diffuse * lightColor * NoL;
+    vec3 specularTerm = f_sepecular * lightColor * NoL;
+    vec3 color = (k_d * f_diffuse + f_sepecular) * lightColor * NoL;
+
 
     // #TODO 指定light color
     // vec3 lightColor = vec3(1.0);
-
-    vec3 color = vec3(0.0);
 
     
 

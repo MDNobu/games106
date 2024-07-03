@@ -11,6 +11,7 @@ layout (set = 0, binding = 0) uniform UBOScene
 	mat4 view;
 	vec4 lightPos;
 	vec4 viewPos;
+	vec4 lightColorIntensity;
 } uboScene;
 
 // layout(push_constant) uniform PushConsts {
