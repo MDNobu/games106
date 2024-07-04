@@ -682,6 +682,7 @@ public:
 					const float* positionBuffer = nullptr;
 					const float* normalsBuffer = nullptr;
 					const float* texCoordsBuffer = nullptr;
+					const float* tangentBuffer = nullptr;
 					size_t vertexCount = 0;
 
 					// Get buffer data for vertex positions
@@ -841,7 +842,7 @@ public:
 		float currentTime = GetCurrentTimeInSeconds();
 		currentTime = std::fmod(currentTime, 60.0f);
 		// std::cout << "current time:" << currentTime << std::endl;
-		// currentTime = 0;
+		currentTime = 0;
 
 		for (Node* node : nodes)
 		{
@@ -1306,7 +1307,8 @@ public:
 		updateUniformBuffers();
 	}
 
-	std::array<float, 3> color;
+	std::array<float, 3> color = {1, 1, 1};
+	float lightIntensity = 1.0f;
 	virtual void OnUpdateUIOverlay(vks::UIOverlay *overlay)
 	{
 		if (overlay->header("Settings")) {
@@ -1317,7 +1319,16 @@ public:
 			
 			if (overlay->colorPicker("LightColor", color.data()))
 			{
-				shaderData.values.lightColorInstensity = glm::vec4(color[0], color[1], color[2], 1.0f);
+				shaderData.values.lightColorInstensity[0] = color[0];
+				shaderData.values.lightColorInstensity[1] = color[1];
+				shaderData.values.lightColorInstensity[2] = color[2];
+					//glm::vec4(color[0], color[1], color[2], 1.0f);
+			}
+
+			
+			if (overlay->sliderFloat("LightIntensity", &lightIntensity, 0.0f, 10.0f))
+			{
+				shaderData.values.lightColorInstensity[3] = lightIntensity;
 			}
 		}
 	}

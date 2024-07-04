@@ -36,9 +36,13 @@ void main()
 	outUV = inUV;
 	gl_Position = uboScene.projection * uboScene.view * primitive.model * vec4(inPos.xyz, 1.0);
 	
-	vec4 pos = uboScene.view * vec4(inPos, 1.0);
-	outNormal = mat3(uboScene.view) * inNormal;
-	vec3 lPos = mat3(uboScene.view) * uboScene.lightPos.xyz;
-	outLightVec = uboScene.lightPos.xyz - pos.xyz;
-	outViewVec = uboScene.viewPos.xyz - pos.xyz;	
+	// vec4 pos = uboScene.view * vec4(inPos, 1.0);
+	// outNormal = mat3(uboScene.view) * inNormal;
+	// vec3 lPos = mat3(uboScene.view) * uboScene.lightPos.xyz;
+	// outLightVec = uboScene.lightPos.xyz - pos.xyz;
+	// outViewVec = uboScene.viewPos.xyz - pos.xyz;	
+	vec4 posWS = primitive.model * vec4(inPos, 1.0);
+	outNormal = mat3(primitive.model) * inNormal;  // 这里先假设没有no uniform scale
+	outLightVec = uboScene.lightPos.xyz - posWS.xyz;
+	outViewVec = uboScene.viewPos.xyz - posWS.xyz;
 }

@@ -67,6 +67,8 @@ vec3 SurfaceShading(vec3 N,  vec3 V, vec3 L,
     // vec3 lightColor = vec3(1.0);
 
     
-
+    // float test = NoL;
+    // color = vec3(test, test, test);
+    color = f_sepecular;
     return color;
 }

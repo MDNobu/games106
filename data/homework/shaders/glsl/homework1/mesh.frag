@@ -1,6 +1,8 @@
 #version 450
 
-#include "common.glsl"
+// #include "common.glsl"
+#include "common3.glsl"
+
 
 // // #TODO 先实现方向光
 // layout (set = 3,  binding = 0) uniform LightUniform
@@ -58,20 +60,28 @@ void main()
 	vec3 L = normalize(inLightVec);
 	vec3 V = normalize(inViewVec);
 	vec3 R = reflect(L, N);
-	// vec3 diffuse = max(dot(N, L), 0.15) * inColor;
-	// vec3 specular = pow(max(dot(R, V), 0.0), 16.0) * vec3(0.75);
+	vec3 diffuse = max(dot(N, L), 0.0) * baseColor.rgb;
+	vec3 specular = pow(max(dot(R, V), 0.0), 16.0) * vec3(0.75);
 	
-	// outFragColor = vec4(diffuse * color.rgb + specular, 1.0);
+	// outFragColor = vec4(diffuse * baseColor.rgb + specular, 1.0);
 	// outFragColor = 	Test();	
 
-	vec3 lightColor = uboScene.lightColorIntensity.rgb;
+	// vec4 lightColorIntensity = vec4(uboScene.lightColorIntensity.rgb, 3.0);
+	vec4 lightColorIntensity = uboScene.lightColorIntensity;
+
 	float metallic = materialUniform.metallic;
 	float roughness = materialUniform.roughness;
 	
+	// metallic = 0.0;
+	// roughness = 0.5;
+	roughness = 0;
+	metallic = 0;
+	// baseColor.rgb = vec3(1, 0, 0);
+	vec3 directShading = SurfaceShading(N, V, L, baseColor.rgb, lightColorIntensity, metallic, roughness);
 
-	vec3 directShading = SurfaceShading(N, V, L, baseColor.rgb, lightColor, metallic, roughness);
 
-
+	// directShading = lightColor;
 	// 先实现单光源，直接光
 	outFragColor = vec4(directShading, 1.0);
+	// outFragColor = vec4(diffuse.rgb, 1.0);
 }
