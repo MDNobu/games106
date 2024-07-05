@@ -58,6 +58,7 @@ void main()
 	// #TODO 加上法线贴图之后N/L/V的计算需要移动到fragment shader中实现
 	vec3 N = normalize(inNormal);
 	vec3 L = normalize(inLightVec);
+	// L = normalize(vec3(1, 100, 100));
 	vec3 V = normalize(inViewVec);
 	vec3 R = reflect(L, N);
 	vec3 diffuse = max(dot(N, L), 0.0) * baseColor.rgb;

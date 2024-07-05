@@ -5,9 +5,6 @@
 
 const float PI = 3.14159265359;
 
-// 注意：实际实现中roughness接近0时会出现精度问题，所以一般会对输入做限制
-#define MIN_PERCEPTUAL_ROUGHNESS 0.089
-
 struct PixelParams
 {
     vec3 diffuseColor;
@@ -98,33 +95,6 @@ float D_GGX( float a2, float NoH )
 	return a2 / ( PI*d*d );					// 4 mul, 1 rcp
 }
 
-//------------------------------------------------------------------------------
-// Specular BRDF implementations
-//------------------------------------------------------------------------------
-
-float D_GGX_Filament(float roughness, float NoH) {
-    // Walter et al. 2007, "Microfacet Models for Refraction through Rough Surfaces"
-
-    // In mediump, there are two problems computing 1.0 - NoH^2
-    // 1) 1.0 - NoH^2 suffers floating point cancellation when NoH^2 is close to 1 (highlights)
-    // 2) NoH doesn't have enough precision around 1.0
-    // Both problem can be fixed by computing 1-NoH^2 in highp and providing NoH in highp as well
-
-    // However, we can do better using Lagrange's identity:
-    //      ||a x b||^2 = ||a||^2 ||b||^2 - (a . b)^2
-    // since N and H are unit vectors: ||N x H||^2 = 1.0 - NoH^2
-    // This computes 1.0 - NoH^2 directly (which is close to zero in the highlights and has
-    // enough precision).
-    // Overall this yields better performance, keeping all computations in mediump
-    float oneMinusNoHSquared = 1.0 - NoH * NoH;
-
-
-    float a = NoH * roughness;
-    float k = roughness / (oneMinusNoHSquared + a * a);
-    float d = k * k * (1.0 / PI);
-    return d;
-}
-
 // Appoximation of joint Smith term for GGX
 // [Heitz 2014, "Understanding the Masking-Shadowing Function in Microfacet-Based BRDFs"]
 float Vis_SmithJointApprox( float a2, float NoV, float NoL )
@@ -156,53 +126,53 @@ vec3 F_Schlick(vec3 f0, float VoH) {
 // 	return saturate( 50.0 * SpecularColor.g ) * Fc + (1 - Fc) * SpecularColor;
 // }
 
-float V_SmithGGXCorrelated(float roughness, float NoV, float NoL) {
-    // Heitz 2014, "Understanding the Masking-Shadowing Function in Microfacet-Based BRDFs"
-    float a2 = roughness * roughness;
-    // TODO: lambdaV can be pre-computed for all the lights, it should be moved out of this function
-    float lambdaV = NoL * sqrt((NoV - a2 * NoV) * NoV + a2);
-    float lambdaL = NoV * sqrt((NoL - a2 * NoL) * NoL + a2);
-    float v = 0.5 / (lambdaV + lambdaL);
-    // a2=0 => v = 1 / 4*NoL*NoV   => min=1/4, max=+inf
-    // a2=1 => v = 1 / 2*(NoL+NoV) => min=1/4, max=+inf
-    // clamp to the maximum value representable in mediump
-    return v;
-}
-
-float V_SmithGGXCorrelated_Fast(float roughness, float NoV, float NoL) {
-    // Hammon 2017, "PBR Diffuse Lighting for GGX+Smith Microsurfaces"
-    float v = 0.5 / mix(2.0 * NoL * NoV, NoL + NoV, roughness);
-    return v;
-}
-
-// Appoximation of joint Smith term for GGX
-// [Heitz 2014, "Understanding the Masking-Shadowing Function in Microfacet-Based BRDFs"]
-float Vis_SmithJointApprox2( float roughness, float NoV, float NoL )
+// Normal Distribution
+float Throwbridge_Reitz_GGX(float NoH, float a)
 {
-	float a = roughness;
-	float Vis_SmithV = NoL * ( NoV * ( 1 - a ) + a );
-	float Vis_SmithL = NoV * ( NoL * ( 1 - a ) + a );
-	return 0.5  / ( Vis_SmithV + Vis_SmithL );
+    float a2 = a * a;
+    float NoH2 = NoH * NoH;
+
+    float nom = a2;
+    float denom = (NoH2 * (a2 - 1.0) + 1.0);
+    denom = PI * denom * denom;
+    return nom / denom;
 }
 
-// 这里抄的UE4的实现，公式是优化过的， #TODO 对于没优化的公式，理解为什么
+// Fresnel
+vec3 SchlickFresnel(float HoV, vec3 F0)
+{
+    float m = clamp(1 - HoV, 0, 1);
+    float m2 = m * m;
+    float m5 = m2 * m2 * m;
+    return F0 + (1.0 - F0) * m5;
+}
+
+// Geometry term (shadow mask term)
+float SchlickGGX(float NoV, float k)
+{
+    float nom = NoV;
+    float denom = NoV * (1.0 - k) + k;
+
+    return nom / denom;
+}
+
+
+
 vec3 SpecularGGX(float roughness, vec3 specularColor, BxDFContext context)
 {
-    roughness = 0.1;
-    float a2 = roughness * roughness;
-    float energy = 1.0; // 这个UE4中是用来处理面光源的，#TODO 没有完全明白意义
+    float roughness2 = roughness * roughness;
+    float k = ((roughness2 + 1.0) * (roughness2 + 1.0)) / 8.0;
+    
 
-    float D = D_GGX_Filament(roughness, context.NoH);
-    float Vis = Vis_SmithJointApprox2(roughness, context.NoV, context.NoL);
-    // float Vis = V_SmithGGXCorrelated(roughness, context.NoV, context.NoL);
+    float D = D_GGX(roughness2, context.NoH);
+    vec3 F = SchlickFresnel(context.VoH, specularColor);
+    float G  = SchlickGGX(context.NoV, k) * SchlickGGX(context.NoL, k);
 
-    vec3 F = F_Schlick(specularColor, context.LoH);
+    vec3 f_specular = (D * F * G) / (4.0 * context.NoV * context.NoL + 0.0001);
 
-    vec3 brdf = (D * Vis) * F;
-
-    float test = Vis;
+    float test = D;
     vec3 test3 = vec3(test, test, test);
-    return brdf;
+    return test3;
 }
      
 
@@ -215,24 +185,20 @@ vec3 SurfaceShading(vec3 N,  vec3 V, vec3 L,
     context.NoV = saturate(abs( context.NoV ) + 1e-5);
 
     PixelParams pixel;
-    pixel.perceptualRoughness = clamp(perceptualRoughness, MIN_PERCEPTUAL_ROUGHNESS, 1.0);;
+    pixel.perceptualRoughness = perceptualRoughness;
     pixel.roughness = PerceptualRoughnessToRoughness(pixel.perceptualRoughness);
     pixel.diffuseColor = computeDiffuseColor(baseColor, metallic);
     pixel.specularColor = computeF0(0.5, baseColor, metallic);
 
 
-    vec3 diffuse =  Diffuse_Lambert(pixel.diffuseColor);
+    vec3 diffuse = lightColorIntensity.rgb * lightColorIntensity.w * context.NoL * Diffuse_Lambert(pixel.diffuseColor);
     // float diffuse = diffuseLobe(pixel, NoV, NoL, LoH);
 
-    vec3 specular =  SpecularGGX(pixel.roughness, pixel.specularColor, context);
+    vec3 specular = lightColorIntensity.rgb * lightColorIntensity.w * context.NoL * SpecularGGX(pixel.roughness, pixel.specularColor, context);
 
-    vec3 brdfs = diffuse + specular;
-
-    vec3 outColor = lightColorIntensity.rgb * lightColorIntensity.w * context.NoL * brdfs;
     // float test = context.NoL;
     // vec3 testColor = vec3(test, test, test); 
     // return testColor;
-    float test = pixel.roughness;
-    vec3 test3 = SpecularGGX(pixel.roughness, pixel.specularColor, context) * lightColorIntensity.w;
-    return outColor;
+    vec3 test = SpecularGGX(pixel.roughness, pixel.specularColor, context);
+    return test;
 }
